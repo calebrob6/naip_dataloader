@@ -76,7 +76,7 @@ def random_crop_to_file(url, output_fn):
         with rasterio.open(output_fn, "w", **profile) as g:
             g.write(data)
 
-    lats, lons = fiona.transform.transform(
+    lons, lats = fiona.transform.transform(
         crs, "epsg:4326", [xmin + xoffset + 128], [ymin + yoffset + 128]
     )
     return lats[0], lons[0]
