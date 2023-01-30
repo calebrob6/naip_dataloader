@@ -1,0 +1,29 @@
+{
+    "python.formatting.provider": "black",
+    "python.linting.enabled": true,
+    "python.linting.pydocstyleEnabled": false,
+    "python.linting.flake8Enabled": true,
+    "python.linting.mypyEnabled": true,
+    "editor.renderWhitespace": "trailing",
+    "python.linting.flake8Args": [
+        "--max-line-length=88"
+    ],
+    "files.watcherExclude": {
+        "**/.git/objects/**": true,
+        "**/.git/subtree-cache/**": true,
+        "**/model_output/**": true,
+        "**/logs/**": true,
+        "**/notebooks/**": true,
+        "**/docs/**": true,
+        "**/tests/**": true,
+        "**/.mpypy_cache/**": true
+    },
+    "search.exclude": {
+        "**/notebooks/**": true,
+        "**/data/**": true
+    },
+    "editor.rulers": [
+        88
+    ],
+    "git.ignoreLimitWarning": true,
+}

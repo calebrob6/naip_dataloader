@@ -1,0 +1,21 @@
+name: naip
+channels:
+  - anaconda
+dependencies:
+  - pip
+  - python=3.10
+  - pip:
+    - black[jupyter]>=21.8
+    - flake8>=3.8
+    - ipywidgets>=7
+    - isort[colors]>=5.8
+    - jupyter
+    - mypy>=0.900
+    - planetary-computer
+    - pydocstyle[toml]>=6.1
+    - pytest>=6.1.2
+    - pytest-cov>=2.4
+    - rioxarray
+    - stack-vrt
+    - tensorboard
+    - git+https://github.com/microsoft/torchgeo.git  # installing bleeding edge version until 0.4 is released, this is what has the dependencies for pytorch, etc.
