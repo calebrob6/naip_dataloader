@@ -16,7 +16,8 @@
         "**/notebooks/**": true,
         "**/docs/**": true,
         "**/tests/**": true,
-        "**/.mpypy_cache/**": true
+        "**/.mpypy_cache/**": true,
+        "**/data/**": true
     },
     "search.exclude": {
         "**/notebooks/**": true,

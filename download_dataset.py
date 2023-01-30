@@ -18,11 +18,11 @@ os.environ["GDAL_HTTP_MERGE_CONSECUTIVE_RANGES"] = "YES"
 
 CATALOG = Client.open(
     "https://planetarycomputer.microsoft.com/api/stac/v1",
-    modifier=planetary_computer.sign_inplace,
+    # modifier=planetary_computer.sign_inplace,
 )
-NUM_PROCESSES = 24
+NUM_PROCESSES = 12
 MIN_YEAR = 2018
-NUM_POINTS = 5000
+NUM_POINTS = 100_000
 
 
 def random_crop_to_file(url, output_fn):
@@ -105,7 +105,7 @@ def main():
     assets = df.iloc[idxs]["assets"].values
     inputs = []
     for i in range(NUM_POINTS):
-        inputs.append((assets[i]["image"]["href"], f"data/sample_{i}.tif"))
+        inputs.append((assets[i]["image"]["href"], f"data/images/sample_{i}.tif"))
 
     print(f"Running parallel downloads with {NUM_PROCESSES} processes")
     with multiprocessing.Pool(processes=NUM_PROCESSES) as pool:
@@ -117,7 +117,7 @@ def main():
         )
 
     df = pd.DataFrame(rows)
-    df.to_csv("index.csv", index=False)
+    df.to_csv("data/index.csv", index=False)
 
 
 if __name__ == "__main__":
