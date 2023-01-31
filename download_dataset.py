@@ -2,13 +2,13 @@ import multiprocessing
 import os
 import random
 
-import fiona.transform
 import geopandas
 import numpy as np
 import pandas as pd
 import planetary_computer
 import rasterio
 from affine import Affine
+from pyproj import Transformer
 from pystac_client import Client
 from rasterio.enums import Resampling
 from tqdm import tqdm
@@ -20,7 +20,7 @@ CATALOG = Client.open(
     "https://planetarycomputer.microsoft.com/api/stac/v1",
     # modifier=planetary_computer.sign_inplace,
 )
-NUM_PROCESSES = 12
+NUM_PROCESSES = 24
 MIN_YEAR = 2018
 NUM_POINTS = 100_000
 
@@ -38,46 +38,50 @@ def random_crop_to_file(url, output_fn):
     Returns:
         lat, lon centroid of the resulting crop
     """
-    with rasterio.open(url) as f:
-        xmin, ymin, xmax, ymax = f.bounds
-        crs = f.crs.to_string()
-        width = xmax - xmin
-        height = ymax - ymin
+    with rasterio.Env():
+        with rasterio.open(url) as f:
+            xmin, ymin, xmax, ymax = f.bounds
+            src_crs = f.crs.to_string()
+            width = xmax - xmin
+            height = ymax - ymin
 
-        xoffset = random.random() * width - 256
-        yoffset = random.random() * height - 256
+            xoffset = random.random() * width - 256
+            yoffset = random.random() * height - 256
 
-        window = f.window(
-            xmin + xoffset, ymin + yoffset, xmin + xoffset + 256, ymin + yoffset + 256
-        )
-        data = f.read(
-            window=window, out_shape=(256, 256), resampling=Resampling.bilinear
-        )
+            window = f.window(
+                xmin + xoffset,
+                ymin + yoffset,
+                xmin + xoffset + 256,
+                ymin + yoffset + 256,
+            )
+            data = f.read(
+                window=window, out_shape=(256, 256), resampling=Resampling.bilinear
+            )
 
-        dst_transform = Affine(
-            1.0, 0.0, xmin + xoffset, 0.0, -1.0, ymin + yoffset + 256
-        )
+            dst_transform = Affine(
+                1.0, 0.0, xmin + xoffset, 0.0, -1.0, ymin + yoffset + 256
+            )
 
-        profile = f.profile.copy()
-        profile["transform"] = dst_transform
-        profile["height"] = 256
-        profile["width"] = 256
-        profile["photometric"] = "RGB"
-        profile["compress"] = "deflate"
-        profile["predictor"] = 2
-        profile["blockxsize"] = 256
-        profile["blockysize"] = 256
+            profile = f.profile.copy()
+            profile["transform"] = dst_transform
+            profile["height"] = 256
+            profile["width"] = 256
+            profile["photometric"] = "RGB"
+            profile["compress"] = "deflate"
+            profile["predictor"] = 2
+            profile["blockxsize"] = 256
+            profile["blockysize"] = 256
 
-        with rasterio.open(output_fn, "w", **profile) as g:
-            g.write(data)
+            with rasterio.open(output_fn, "w", **profile) as g:
+                g.write(data)
 
-    lons, lats = fiona.transform.transform(
-        crs, "epsg:4326", [xmin + xoffset + 128], [ymin + yoffset + 128]
-    )
+    transformer = Transformer.from_crs(src_crs, "EPSG:4326")
+    lon, lat = transformer.transform(xmin + xoffset + 128, ymin + yoffset + 128)
+
     return {
-        "lat": lats[0],
-        "lon": lons[0],
-        "path": output_fn,
+        "lat": lon,
+        "lon": lat,
+        "filename": os.path.basename(output_fn),
     }
 
 
@@ -96,16 +100,35 @@ def main():
         asset.href, storage_options=asset.extra_fields["table:storage_options"]
     )
     print(f"Found {df.shape[0]} items")
-    print(f"Filtering results by tiles captured in {MIN_YEAR} or later")
-    df["year"] = df["naip:year"].apply(lambda x: int(x))
-    df = df[df["year"] >= MIN_YEAR]
-    print(f"{df.shape[0]} items remain after filtering")
 
-    idxs = np.random.choice(df.shape[0], size=NUM_POINTS, replace=True)
-    assets = df.iloc[idxs]["assets"].values
+    print("Filtering results by the most recent tiles captured for each state")
+    df["year"] = df["naip:year"].apply(lambda x: int(x))
+
+    states = set(df["naip:state"])
+    subset = df[df["year"] >= 2018]
+
+    seen_states = set()
+    repeated_state_years = []
+    for year, state in sorted(
+        list(set(zip(subset["year"], subset["naip:state"]))), reverse=True
+    ):
+        if state not in seen_states:
+            seen_states.add(state)
+        else:
+            repeated_state_years.append((year, state))
+    assert len(states - seen_states) == 0
+
+    for year, state in repeated_state_years:
+        mask = (subset["year"] == year) & (subset["naip:state"] == state)
+        subset = subset[~mask]
+    print(f"{subset.shape[0]} items remain after filtering")
+
+    idxs = np.random.choice(subset.shape[0], size=NUM_POINTS, replace=True)
+    assets = subset.iloc[idxs]["assets"].values
     inputs = []
     for i in range(NUM_POINTS):
         inputs.append((assets[i]["image"]["href"], f"data/images/sample_{i}.tif"))
+    subset.iloc[idxs].to_csv("data/naip.csv", index=False)
 
     print(f"Running parallel downloads with {NUM_PROCESSES} processes")
     with multiprocessing.Pool(processes=NUM_PROCESSES) as pool:
