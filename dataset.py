@@ -47,10 +47,10 @@ class NAIPGeo(NonGeoDataset):
         self.filenames = []
         self.points = []
         for i in range(df.shape[0]):
-            self.filenames.append(
-                os.path.join(self.root, "images", df.iloc[i]["filename"])
+            self.filenames.append(os.path.join(self.root, "images", df.iloc[i]["fn"]))
+            self.points.append(
+                (df.iloc[i]["centroid_longitude"], df.iloc[i]["centroid_latitude"])
             )
-            self.points.append((df.iloc[i]["lon"], df.iloc[i]["lat"]))
 
     def __getitem__(self, index: int) -> Dict[str, Tensor]:
         """Return an index within the dataset.

@@ -13,19 +13,12 @@ from pystac_client import Client
 from rasterio.enums import Resampling
 from tqdm import tqdm
 
-os.environ["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"
-os.environ["GDAL_HTTP_MERGE_CONSECUTIVE_RANGES"] = "YES"
-
-CATALOG = Client.open(
-    "https://planetarycomputer.microsoft.com/api/stac/v1",
-    # modifier=planetary_computer.sign_inplace,
-)
 NUM_PROCESSES = 24
 MIN_YEAR = 2018
 NUM_POINTS = 100_000
 
 
-def random_crop_to_file(url, output_fn):
+def random_crop_to_file(row):
     """Reads a random 256 x 256 meter crop from an input GeoTIFF and saves the result as
     a 256 x 256 pixel GeoTIFF (i.e. 1m/px resolution) resampling with bilinear
     interpolation as necessary. It is necessary to resample because sometimes NAIP is
@@ -38,58 +31,66 @@ def random_crop_to_file(url, output_fn):
     Returns:
         lat, lon centroid of the resulting crop
     """
-    with rasterio.Env():
-        with rasterio.open(url) as f:
-            xmin, ymin, xmax, ymax = f.bounds
-            src_crs = f.crs.to_string()
-            width = xmax - xmin
-            height = ymax - ymin
+    with rasterio.open(row["naip:url"]) as f:
+        xmin, ymin, xmax, ymax = f.bounds
+        src_crs = f.crs.to_string()
+        width = xmax - xmin
+        height = ymax - ymin
 
-            xoffset = random.random() * width - 256
-            yoffset = random.random() * height - 256
+        xoffset = random.random() * width - 256
+        yoffset = random.random() * height - 256
 
-            window = f.window(
-                xmin + xoffset,
-                ymin + yoffset,
-                xmin + xoffset + 256,
-                ymin + yoffset + 256,
-            )
-            data = f.read(
-                window=window, out_shape=(256, 256), resampling=Resampling.bilinear
-            )
+        window = f.window(
+            xmin + xoffset,
+            ymin + yoffset,
+            xmin + xoffset + 256,
+            ymin + yoffset + 256,
+        )
+        data = f.read(
+            window=window, out_shape=(256, 256), resampling=Resampling.bilinear
+        )
 
-            dst_transform = Affine(
-                1.0, 0.0, xmin + xoffset, 0.0, -1.0, ymin + yoffset + 256
-            )
+        dst_transform = Affine(
+            1.0, 0.0, xmin + xoffset, 0.0, -1.0, ymin + yoffset + 256
+        )
 
-            profile = f.profile.copy()
-            profile["transform"] = dst_transform
-            profile["height"] = 256
-            profile["width"] = 256
-            profile["photometric"] = "RGB"
-            profile["compress"] = "deflate"
-            profile["predictor"] = 2
-            profile["blockxsize"] = 256
-            profile["blockysize"] = 256
+        profile = f.profile.copy()
+        profile["transform"] = dst_transform
+        profile["height"] = 256
+        profile["width"] = 256
+        profile["photometric"] = "RGB"
+        profile["compress"] = "deflate"
+        profile["predictor"] = 2
+        profile["blockxsize"] = 256
+        profile["blockysize"] = 256
 
-            with rasterio.open(output_fn, "w", **profile) as g:
-                g.write(data)
+        with rasterio.open(row["fn"], "w", **profile) as g:
+            g.write(data)
 
     transformer = Transformer.from_crs(src_crs, "EPSG:4326")
     lon, lat = transformer.transform(xmin + xoffset + 128, ymin + yoffset + 128)
 
-    return {
-        "lat": lon,
-        "lon": lat,
-        "filename": os.path.basename(output_fn),
-    }
+    row.update(
+        {
+            "tile_xmin": xmin,
+            "tile_ymin": ymin,
+            "tile_xmax": xmax,
+            "tile_ymax": ymax,
+            "xoffset": xoffset,
+            "yoffset": yoffset,
+            "centroid_latitude": lat,
+            "centroid_longitude": lon,
+            "fn": os.path.basename(row["fn"]),
+        }
+    )
 
-
-def call_get_naip_around_point_time(args):
-    return random_crop_to_file(*args)
+    return row
 
 
 def main():
+    # the Pool workers seems to randomly hang without this
+    multiprocessing.set_start_method("spawn")
+
     print("Downloading the NAIP geoparquet dataset (this will take a bit)")
     catalog = Client.open(
         "https://planetarycomputer.microsoft.com/api/stac/v1/",
@@ -125,16 +126,27 @@ def main():
 
     idxs = np.random.choice(subset.shape[0], size=NUM_POINTS, replace=True)
     assets = subset.iloc[idxs]["assets"].values
-    inputs = []
-    for i in range(NUM_POINTS):
-        inputs.append((assets[i]["image"]["href"], f"data/images/sample_{i}.tif"))
-    subset.iloc[idxs].to_csv("data/naip.csv", index=False)
+    years = subset.iloc[idxs]["naip:year"].values
+    state = subset.iloc[idxs]["naip:state"].values
+
+    input_rows = []
+    for i in tqdm(range(NUM_POINTS)):
+        row = {
+            "idx": i,
+            "naip:url": assets[i]["image"]["href"],
+            "fn": f"data/images/sample_{i}.tif",
+            "naip:year": years[i],
+            "naip:state": state[i],
+        }
+        input_rows.append(row)
+    df = pd.DataFrame(input_rows)
+    df.to_csv("data/index_input.csv", index=False)
 
     print(f"Running parallel downloads with {NUM_PROCESSES} processes")
     with multiprocessing.Pool(processes=NUM_PROCESSES) as pool:
         rows = list(
             tqdm(
-                pool.imap(call_get_naip_around_point_time, inputs),
+                pool.imap_unordered(random_crop_to_file, input_rows),
                 total=NUM_POINTS,
             )
         )
